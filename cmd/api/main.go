@@ -14,9 +14,10 @@ import (
 	"backend-residuos-app/pkg/middleware"
 	"backend-residuos-app/pkg/migration"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // healthCheck godoc
@@ -36,7 +37,7 @@ func healthCheck(c *gin.Context) {
 
 // @title           Backend Residuos API
 // @version         1.0
-// @description     API para la gestión de reportes de residuos con integración Firebase y PostgreSQL
+// @description     API para la gestión de reportes de residuos con integración Firebase y PostgreSQL funciono!
 // @termsOfService  http://swagger.io/terms/
 
 // @contact.name   API Support
@@ -46,7 +47,7 @@ func healthCheck(c *gin.Context) {
 // @license.name  Apache 2.0
 // @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
 
-// @host      localhost:8080
+// @host      localhost:8081
 // @BasePath  /api/v1
 
 // @securityDefinitions.apikey BearerAuth
@@ -86,13 +87,28 @@ func main() {
 	auditRepo := repositories.NewAuditRepository(db)
 
 	// Inicializar servicios
-	authService := services.NewAuthService(firebaseClient)
+	authService := services.NewAuthService(firebaseClient, userRepo)
 	notificationService := services.NewNotificationService(firebaseClient)
 	syncService := services.NewSyncService(firebaseClient, userRepo, reportRepo, auditRepo)
 
+	// Nuevos servicios para reportes
+	validationService := services.NewValidationService()
+	cedulaService := services.NewCedulaValidationService(cfg.CedulaAPIURL)
+
+	// Configurar Firebase Storage
+	photoService, err := services.NewPhotoUploadService(cfg.FirebaseStorageBucket, cfg.FirebaseCredentialsPath)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize photo upload service: %v", err)
+		// Continuar sin el servicio de fotos si no está disponible
+	}
+
+	reportService := services.NewReportService(reportRepo, userRepo)
+
 	// Inicializar handlers
 	authHandler := handlers.NewAuthHandler(authService)
+	registrationHandler := handlers.NewRegistrationHandler(authService)
 	notificationHandler := handlers.NewNotificationHandler(notificationService)
+	reportHandler := handlers.NewReportHandler(reportService, cedulaService, photoService, validationService)
 
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -102,18 +118,35 @@ func main() {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 
-	router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+	// Configuración CORS
+	config := cors.DefaultConfig()
+	config.AllowOrigins = []string{
+		"http://localhost:3000",
+		"http://localhost:3001",
+		"http://localhost:8080",
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:8080",
+		"https://localhost:3000",
+		"https://127.0.0.1:3000",
+	}
+	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+	config.AllowHeaders = []string{
+		"Origin",
+		"Content-Length",
+		"Content-Type",
+		"Authorization",
+		"Accept",
+		"Accept-Encoding",
+		"Accept-Language",
+		"X-CSRF-Token",
+		"X-Requested-With",
+		"Cache-Control",
+	}
+	config.ExposeHeaders = []string{"Content-Length"}
+	config.AllowCredentials = true
+	config.MaxAge = 12 * 3600 // 12 hours
 
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
-	})
+	router.Use(cors.New(config))
 
 	// Documentación Swagger
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -121,6 +154,22 @@ func main() {
 	public := router.Group("/api/v1")
 	{
 		public.GET("/health", healthCheck)
+
+		// Endpoint de verificación de Firebase
+		public.GET("/auth/firebase-status", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"firebase_project_id": cfg.FirebaseProjectID,
+				"firebase_configured": firebaseClient != nil,
+				"message":             "Firebase connection status",
+			})
+		})
+
+		// Nuevos endpoints de autenticación
+		public.POST("/auth/register", registrationHandler.Register)
+		public.POST("/auth/login", registrationHandler.Login)
+		public.POST("/auth/oauth", registrationHandler.LoginOAuth)
+
+		// Endpoints existentes (mantener compatibilidad)
 		public.POST("/auth/users", authHandler.CreateUser)
 		public.GET("/auth/users/email/:email", authHandler.GetUserByEmail)
 
@@ -140,6 +189,12 @@ func main() {
 
 			c.JSON(200, gin.H{"success": true, "data": user, "message": "User synced successfully"})
 		})
+
+		// Endpoints públicos para reportes
+		reports := public.Group("/reports")
+		{
+			reports.POST("/validate-cedula", reportHandler.ValidateCedula)
+		}
 	}
 
 	protected := router.Group("/api/v1")
@@ -147,6 +202,10 @@ func main() {
 	{
 		auth := protected.Group("/auth")
 		{
+			// Nuevos endpoints protegidos
+			auth.POST("/verify", registrationHandler.VerifyToken)
+
+			// Endpoints existentes
 			auth.GET("/profile", authHandler.GetProfile)
 			auth.PUT("/profile", authHandler.UpdateProfile)
 			auth.DELETE("/account", authHandler.DeleteAccount)
@@ -160,6 +219,14 @@ func main() {
 			notifications.POST("/subscribe", notificationHandler.SubscribeToTopic)
 			notifications.POST("/unsubscribe", notificationHandler.UnsubscribeFromTopic)
 			notifications.POST("/waste-reminder", notificationHandler.SendWasteCollectionReminder)
+		}
+
+		// Endpoints protegidos para reportes
+		reports := protected.Group("/reports")
+		{
+			reports.POST("/create", reportHandler.CreateReport)
+			reports.GET("/my-reports", reportHandler.GetReportsByUser)
+			reports.GET("/:id", reportHandler.GetReportByID)
 		}
 	}
 

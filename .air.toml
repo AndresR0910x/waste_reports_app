@@ -1,0 +1,79 @@
+# Configuration for Air hot reload tool
+# Complete documentation: https://github.com/cosmtrek/air
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+# Watch settings
+[build]
+  args_bin = []
+  bin = "./tmp/backend-residuos-app"
+  cmd = "go build -o ./tmp/backend-residuos-app ./cmd/api"
+  delay = 1000
+  exclude_dir = [
+    "assets", 
+    "tmp", 
+    "vendor", 
+    "testdata", 
+    "build", 
+    "bin",
+    ".git",
+    ".github",
+    "node_modules",
+    "migrations/data"
+  ]
+  exclude_file = []
+  exclude_regex = [
+    "_test\\.go$",
+    "\\.git",
+    "\\.vscode",
+    "\\.DS_Store",
+    "\\README\\.md",
+    "\\.md$"
+  ]
+  exclude_unchanged = false
+  follow_symlink = false
+  full_bin = ""
+  include_dir = []
+  include_ext = [
+    "go", 
+    "tpl", 
+    "tmpl", 
+    "html", 
+    "json", 
+    "yaml", 
+    "yml", 
+    "env"
+  ]
+  include_file = []
+  kill_delay = "0s"
+  log = "build-errors.log"
+  poll = false
+  poll_interval = 0
+  rerun = false
+  rerun_delay = 500
+  send_interrupt = false
+  stop_on_root = false
+
+# Color settings
+[color]
+  app = ""
+  build = "yellow"
+  main = "magenta"
+  runner = "green"
+  watcher = "cyan"
+
+# Log settings
+[log]
+  main_only = false
+  time = true
+
+# Miscellaneous settings
+[misc]
+  clean_on_exit = true
+
+# Screen settings
+[screen]
+  clear_on_rebuild = true
+  keep_scroll = true

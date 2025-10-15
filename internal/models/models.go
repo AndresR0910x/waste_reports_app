@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -82,6 +83,48 @@ type ReportUpdate struct {
 	// Campos relacionales
 	Report   *Report `json:"report,omitempty"`
 	Operator *User   `json:"operator,omitempty"`
+}
+
+// CreateReportRequest representa la solicitud para crear un reporte
+type CreateReportRequest struct {
+	Title          string   `json:"title" validate:"required,min=5,max=100"`
+	Description    string   `json:"description" validate:"required,min=10,max=1000"`
+	Category       string   `json:"category" validate:"required,oneof=residuos_organicos residuos_reciclables residuos_peligrosos limpieza_publica mantenimiento_urbano otros"`
+	Location       Location `json:"location" validate:"required"`
+	Address        *string  `json:"address,omitempty" validate:"omitempty,max=200"`
+	Priority       string   `json:"priority" validate:"omitempty,oneof=baja media alta urgente"`
+	PhotoBase64    *string  `json:"photo_base64,omitempty"`
+	CedulaValidate bool     `json:"cedula_validate" validate:"omitempty"`
+}
+
+// CreateReportResponse representa la respuesta al crear un reporte
+type CreateReportResponse struct {
+	ID          int       `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Category    string    `json:"category"`
+	Location    Location  `json:"location"`
+	Address     *string   `json:"address,omitempty"`
+	Status      string    `json:"status"`
+	Priority    string    `json:"priority"`
+	PhotoURL    *string   `json:"photo_url,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	Message     string    `json:"message"`
+}
+
+// CedulaValidationRequest representa la solicitud para validar cédula
+type CedulaValidationRequest struct {
+	Cedula string `json:"cedula" validate:"required,len=10"`
+}
+
+// CedulaValidationResponse representa la respuesta de validación de cédula
+type CedulaValidationResponse struct {
+	IsValid  bool   `json:"is_valid"`
+	Cedula   string `json:"cedula"`
+	FullName string `json:"full_name,omitempty"`
+	Province string `json:"province,omitempty"`
+	Message  string `json:"message"`
+	Source   string `json:"source"` // "api" o "algorithm"
 }
 
 // AuditLog representa un registro de auditoría
@@ -180,15 +223,45 @@ func (sa *StringArray) Scan(value interface{}) error {
 		return nil
 	}
 
-	if b, ok := value.([]byte); ok {
-		return json.Unmarshal(b, sa)
+	var str string
+	switch v := value.(type) {
+	case []byte:
+		str = string(v)
+	case string:
+		str = v
+	default:
+		return fmt.Errorf("cannot scan %T into StringArray", value)
 	}
 
-	if s, ok := value.(string); ok {
-		return json.Unmarshal([]byte(s), sa)
+	// Intentar primero como JSON
+	if strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]") {
+		return json.Unmarshal([]byte(str), sa)
 	}
 
-	return fmt.Errorf("cannot scan %T into StringArray", value)
+	// Si no es JSON, parsear como array de PostgreSQL {item1,item2}
+	if strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}") {
+		// Remover las llaves
+		str = str[1 : len(str)-1]
+
+		// Si está vacío, devolver array vacío
+		if str == "" {
+			*sa = StringArray{}
+			return nil
+		}
+
+		// Dividir por comas y limpiar espacios
+		items := strings.Split(str, ",")
+		result := make([]string, len(items))
+		for i, item := range items {
+			result[i] = strings.TrimSpace(item)
+		}
+		*sa = StringArray(result)
+		return nil
+	}
+
+	// Si no tiene formato de array, tratar como un solo elemento
+	*sa = StringArray{str}
+	return nil
 }
 
 // Value implementa driver.Valuer para StringArray
@@ -258,3 +331,11 @@ const (
 	UpdateTypeComment      = "comment"
 	UpdateTypeEvidence     = "evidence"
 )
+
+// PhotoUploadResult representa el resultado de subir una foto
+type PhotoUploadResult struct {
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+}

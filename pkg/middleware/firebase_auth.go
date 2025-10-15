@@ -10,6 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Context keys
+const UserContextKey = "user"
+
 // FirebaseAuth middleware para autenticación con Firebase
 func FirebaseAuth(firebaseClient *firebase.Firebase) gin.HandlerFunc {
 	return func(c *gin.Context) {

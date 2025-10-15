@@ -98,6 +98,249 @@ func (rr *ReportRepository) GetReportByID(ctx context.Context, id int) (*models.
 	return report, nil
 }
 
+// GetReportsByUserID obtiene reportes de un usuario específico
+func (rr *ReportRepository) GetReportsByUserID(ctx context.Context, userID int, limit, offset int) ([]*models.Report, error) {
+	query := `
+		SELECT r.id, r.user_id, r.title, r.description, r.category, 
+			   ST_AsText(r.location) as location_text, r.address, r.status, r.priority,
+			   r.photo_url, r.created_at, r.updated_at
+		FROM reports r
+		WHERE r.user_id = $1
+		ORDER BY r.created_at DESC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := rr.db.QueryContext(ctx, query, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reports by user: %w", err)
+	}
+	defer rows.Close()
+
+	var reports []*models.Report
+	for rows.Next() {
+		report := &models.Report{}
+		var locationText string
+
+		err := rows.Scan(
+			&report.ID, &report.UserID, &report.Title, &report.Description, &report.Category,
+			&locationText, &report.Address, &report.Status, &report.Priority,
+			&report.PhotoURL, &report.CreatedAt, &report.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan report: %w", err)
+		}
+
+		// Parse location
+		if err := report.Location.Scan(locationText); err != nil {
+			return nil, fmt.Errorf("failed to parse location: %w", err)
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// GetReportsCountByUserID obtiene el total de reportes de un usuario
+func (rr *ReportRepository) GetReportsCountByUserID(ctx context.Context, userID int) (int, error) {
+	query := `SELECT COUNT(*) FROM reports WHERE user_id = $1`
+
+	var count int
+	err := rr.db.QueryRowContext(ctx, query, userID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get reports count: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetReportsByLocation obtiene reportes cerca de una ubicación
+func (rr *ReportRepository) GetReportsByLocation(ctx context.Context, lat, lng float64, radiusKm float64, limit int) ([]*models.Report, error) {
+	query := `
+		SELECT r.id, r.user_id, r.title, r.description, r.category, 
+			   ST_AsText(r.location) as location_text, r.address, r.status, r.priority,
+			   r.photo_url, r.created_at, r.updated_at,
+			   ST_Distance(r.location::geography, ST_Point($2, $1)::geography) as distance
+		FROM reports r
+		WHERE ST_DWithin(r.location::geography, ST_Point($2, $1)::geography, $3 * 1000)
+		ORDER BY distance ASC
+		LIMIT $4`
+
+	rows, err := rr.db.QueryContext(ctx, query, lat, lng, radiusKm, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reports by location: %w", err)
+	}
+	defer rows.Close()
+
+	var reports []*models.Report
+	for rows.Next() {
+		report := &models.Report{}
+		var locationText string
+		var distance float64
+
+		err := rows.Scan(
+			&report.ID, &report.UserID, &report.Title, &report.Description, &report.Category,
+			&locationText, &report.Address, &report.Status, &report.Priority,
+			&report.PhotoURL, &report.CreatedAt, &report.UpdatedAt, &distance,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan report: %w", err)
+		}
+
+		// Parse location
+		if err := report.Location.Scan(locationText); err != nil {
+			return nil, fmt.Errorf("failed to parse location: %w", err)
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// UpdateReport actualiza un reporte
+func (rr *ReportRepository) UpdateReport(ctx context.Context, report *models.Report) error {
+	query := `
+		UPDATE reports 
+		SET title = $2, description = $3, category = $4, location = ST_GeogFromText($5),
+			address = $6, status = $7, priority = $8, photo_url = $9,
+			assigned_operator_id = $10, estimated_resolution = $11, actual_resolution = $12,
+			citizen_satisfaction_rating = $13, citizen_feedback = $14, updated_at = NOW()
+		WHERE id = $1`
+
+	locationWKT := fmt.Sprintf("POINT(%f %f)", report.Location.Longitude, report.Location.Latitude)
+
+	_, err := rr.db.ExecContext(ctx, query,
+		report.ID, report.Title, report.Description, report.Category, locationWKT,
+		report.Address, report.Status, report.Priority, report.PhotoURL,
+		report.AssignedOperatorID, report.EstimatedResolution, report.ActualResolution,
+		report.CitizenSatisfactionRating, report.CitizenFeedback)
+
+	if err != nil {
+		return fmt.Errorf("failed to update report: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteReport elimina un reporte
+func (rr *ReportRepository) DeleteReport(ctx context.Context, id int) error {
+	query := `DELETE FROM reports WHERE id = $1`
+
+	result, err := rr.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete report: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("report not found")
+	}
+
+	return nil
+}
+
+// GetReportsWithFilters obtiene reportes con filtros
+func (rr *ReportRepository) GetReportsWithFilters(ctx context.Context, userID *int, status *string, category *string, limit, offset int) ([]*models.Report, error) {
+	query := `
+		SELECT r.id, r.user_id, r.title, r.description, r.category, 
+			   ST_AsText(r.location) as location_text, r.address, r.status, r.priority,
+			   r.photo_url, r.created_at, r.updated_at
+		FROM reports r
+		WHERE 1=1`
+
+	args := []interface{}{}
+	argIndex := 1
+
+	if userID != nil {
+		query += fmt.Sprintf(" AND r.user_id = $%d", argIndex)
+		args = append(args, *userID)
+		argIndex++
+	}
+
+	if status != nil {
+		query += fmt.Sprintf(" AND r.status = $%d", argIndex)
+		args = append(args, *status)
+		argIndex++
+	}
+
+	if category != nil {
+		query += fmt.Sprintf(" AND r.category = $%d", argIndex)
+		args = append(args, *category)
+		argIndex++
+	}
+
+	query += " ORDER BY r.created_at DESC"
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
+	args = append(args, limit, offset)
+
+	rows, err := rr.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reports with filters: %w", err)
+	}
+	defer rows.Close()
+
+	var reports []*models.Report
+	for rows.Next() {
+		report := &models.Report{}
+		var locationText string
+
+		err := rows.Scan(
+			&report.ID, &report.UserID, &report.Title, &report.Description, &report.Category,
+			&locationText, &report.Address, &report.Status, &report.Priority,
+			&report.PhotoURL, &report.CreatedAt, &report.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan report: %w", err)
+		}
+
+		// Parse location
+		if err := report.Location.Scan(locationText); err != nil {
+			return nil, fmt.Errorf("failed to parse location: %w", err)
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// GetReportsCountWithFilters obtiene el total de reportes con filtros
+func (rr *ReportRepository) GetReportsCountWithFilters(ctx context.Context, userID *int, status *string, category *string) (int, error) {
+	query := `SELECT COUNT(*) FROM reports WHERE 1=1`
+	args := []interface{}{}
+	argIndex := 1
+
+	if userID != nil {
+		query += fmt.Sprintf(" AND user_id = $%d", argIndex)
+		args = append(args, *userID)
+		argIndex++
+	}
+
+	if status != nil {
+		query += fmt.Sprintf(" AND status = $%d", argIndex)
+		args = append(args, *status)
+		argIndex++
+	}
+
+	if category != nil {
+		query += fmt.Sprintf(" AND category = $%d", argIndex)
+		args = append(args, *category)
+		argIndex++
+	}
+
+	var count int
+	err := rr.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get reports count: %w", err)
+	}
+
+	return count, nil
+}
+
 // GetReportsByUser obtiene reportes de un usuario
 func (rr *ReportRepository) GetReportsByUser(ctx context.Context, userID int, limit, offset int) ([]*models.Report, error) {
 	query := `
@@ -215,58 +458,6 @@ func (rr *ReportRepository) UpdateReportStatus(ctx context.Context, reportID int
 	}
 
 	return nil
-}
-
-// GetReportsByLocation obtiene reportes cercanos a una ubicación
-func (rr *ReportRepository) GetReportsByLocation(ctx context.Context, lat, lng, radiusKm float64, limit int) ([]*models.Report, error) {
-	query := `
-		SELECT r.id, r.user_id, r.title, r.description, r.category, 
-			   ST_AsText(r.location) as location_text, r.address, r.status, r.priority,
-			   r.photo_url, r.evidence_photos, r.assigned_operator_id, 
-			   r.estimated_resolution, r.actual_resolution, r.citizen_satisfaction_rating,
-			   r.citizen_feedback, r.sync_status, r.created_at, r.updated_at,
-			   ST_Distance(r.location, ST_GeogFromText($1)) as distance_meters
-		FROM reports r
-		WHERE ST_DWithin(r.location, ST_GeogFromText($1), $2)
-		ORDER BY distance_meters ASC
-		LIMIT $3`
-
-	pointWKT := fmt.Sprintf("POINT(%f %f)", lng, lat)
-	radiusMeters := radiusKm * 1000
-
-	rows, err := rr.db.QueryContext(ctx, query, pointWKT, radiusMeters, limit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get reports by location: %v", err)
-	}
-	defer rows.Close()
-
-	var reports []*models.Report
-	for rows.Next() {
-		report := &models.Report{}
-		var locationText string
-		var distance float64
-
-		err := rows.Scan(
-			&report.ID, &report.UserID, &report.Title, &report.Description, &report.Category,
-			&locationText, &report.Address, &report.Status, &report.Priority,
-			&report.PhotoURL, &report.EvidencePhotos, &report.AssignedOperatorID,
-			&report.EstimatedResolution, &report.ActualResolution, &report.CitizenSatisfactionRating,
-			&report.CitizenFeedback, &report.SyncStatus, &report.CreatedAt, &report.UpdatedAt,
-			&distance)
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan report: %v", err)
-		}
-
-		// Parse location
-		if err := report.Location.Scan(locationText); err != nil {
-			return nil, fmt.Errorf("failed to parse location: %v", err)
-		}
-
-		reports = append(reports, report)
-	}
-
-	return reports, nil
 }
 
 // GetReportsByFilters obtiene reportes con filtros múltiples

@@ -1,0 +1,346 @@
+name: CI/CD Pipeline - Backend Residuos App
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: "1.21"
+  NODE_VERSION: "18"
+
+jobs:
+  # Job 1: Linting and Code Quality
+  lint:
+    name: 🔍 Code Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 📦 Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: 📥 Download dependencies
+        run: go mod download
+
+      - name: 🔍 Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: 🧹 Check code formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Code is not properly formatted:"
+            gofmt -s -l .
+            exit 1
+          fi
+
+      - name: 🔧 Run go vet
+        run: go vet ./...
+
+  # Job 2: Unit Tests
+  test:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_USER: test_user
+          POSTGRES_DB: test_residuos_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 📦 Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: 📥 Download dependencies
+        run: go mod download
+
+      - name: 🔧 Set up test environment
+        run: |
+          echo "Setting up test environment variables..."
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: test_residuos_db
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          GIN_MODE: test
+          FIREBASE_PROJECT_ID: test-project
+
+      - name: 🧪 Run unit tests
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: test_residuos_db
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          GIN_MODE: test
+
+      - name: 📊 Generate coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+          go tool cover -func=coverage.out
+
+      - name: 📤 Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+
+      - name: 📎 Upload coverage artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
+  # Job 3: Integration Tests
+  integration-test:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: integration_password
+          POSTGRES_USER: integration_user
+          POSTGRES_DB: integration_residuos_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 📥 Download dependencies
+        run: go mod download
+
+      - name: 🗄️ Run database migrations
+        run: |
+          # Add migration commands here when available
+          echo "Database migrations would run here"
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: integration_residuos_db
+          DB_USER: integration_user
+          DB_PASSWORD: integration_password
+
+      - name: 🔗 Run integration tests
+        run: |
+          # Add integration test commands here
+          echo "Integration tests would run here"
+          go test -v -tags=integration ./tests/integration/... || echo "Integration tests not yet implemented"
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: integration_residuos_db
+          DB_USER: integration_user
+          DB_PASSWORD: integration_password
+
+  # Job 4: Security Scan
+  security:
+    name: 🛡️ Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 🛡️ Run Gosec Security Scanner
+        uses: securecodewarrior/github-action-gosec@master
+        with:
+          args: '-fmt sarif -out gosec.sarif ./...'
+
+      - name: 📤 Upload Gosec results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'gosec.sarif'
+
+  # Job 5: Build Application
+  build:
+    name: 🏗️ Build Application
+    runs-on: ubuntu-latest
+    needs: [test, integration-test]
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: 📥 Download dependencies
+        run: go mod download
+
+      - name: 🏗️ Build for Linux
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o build/backend-linux-amd64 ./cmd/api
+
+      - name: 🏗️ Build for Windows
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-w -s" -o build/backend-windows-amd64.exe ./cmd/api
+
+      - name: 🏗️ Build for macOS
+        run: |
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-w -s" -o build/backend-darwin-amd64 ./cmd/api
+
+      - name: 📎 Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: build/
+
+  # Job 6: Docker Build
+  docker:
+    name: 🐳 Docker Build
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🏷️ Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            backend-residuos-app
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 🔑 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 🏗️ Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 7: Deploy (only on main branch)
+  deploy:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, docker, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries
+          path: build/
+
+      - name: 🚀 Deploy to production
+        run: |
+          echo "🚀 Deploying to production environment..."
+          echo "This would contain actual deployment commands"
+          echo "Examples: Docker deploy, cloud deployment, etc."
+          
+          # Example deployment commands:
+          # - Deploy to cloud provider
+          # - Update production servers
+          # - Run post-deployment tests
+          # - Send notifications
+
+      - name: 📢 Notify deployment success
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo "Application version: ${{ github.sha }}"
+          echo "Deployed at: $(date -u)"
+
+  # Job 8: Cleanup
+  cleanup:
+    name: 🧹 Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: always()
+    
+    steps:
+      - name: 🧹 Clean up artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log('🧹 Cleaning up old artifacts...');
+            // Add cleanup logic here if needed

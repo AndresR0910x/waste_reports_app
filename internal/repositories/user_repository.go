@@ -97,6 +97,36 @@ func (ur *UserRepository) GetUserByCedula(ctx context.Context, cedula string) (*
 	return user, nil
 }
 
+// GetUserByID obtiene un usuario por su ID
+func (ur *UserRepository) GetUserByID(ctx context.Context, userID int) (*models.User, error) {
+	query := `
+		SELECT u.id, u.firebase_uid, u.email, u.role_id, u.cedula, u.phone, 
+			   u.full_name, u.is_active, u.last_login, u.device_tokens, 
+			   u.created_at, u.updated_at, u.anonymous_id,
+			   r.name as role_name, r.description as role_description, r.permissions as role_permissions
+		FROM users u
+		JOIN roles r ON u.role_id = r.id
+		WHERE u.id = $1 AND u.is_active = true`
+
+	user := &models.User{Role: &models.Role{}}
+	err := ur.db.QueryRowContext(ctx, query, userID).Scan(
+		&user.ID, &user.FirebaseUID, &user.Email, &user.RoleID, &user.Cedula,
+		&user.Phone, &user.FullName, &user.IsActive, &user.LastLogin, &user.DeviceTokens,
+		&user.CreatedAt, &user.UpdatedAt, &user.AnonymousID,
+		&user.Role.Name, &user.Role.Description, &user.Role.Permissions,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to get user: %v", err)
+	}
+
+	user.Role.ID = user.RoleID
+	return user, nil
+}
+
 // UpdateUser actualiza un usuario
 func (ur *UserRepository) UpdateUser(ctx context.Context, user *models.User) error {
 	query := `
@@ -289,4 +319,53 @@ func (ur *UserRepository) SyncUserWithFirebase(ctx context.Context, firebaseUID 
 	}
 
 	return nil
+}
+
+// GetUserByEmail obtiene un usuario por su email
+func (ur *UserRepository) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	query := `
+		SELECT u.id, u.firebase_uid, u.email, u.role_id, u.cedula, u.phone, 
+			   u.full_name, u.is_active, u.last_login, u.device_tokens, 
+			   u.created_at, u.updated_at, u.anonymous_id
+		FROM users u
+		WHERE u.email = $1`
+
+	user := &models.User{}
+	err := ur.db.QueryRowContext(ctx, query, email).Scan(
+		&user.ID, &user.FirebaseUID, &user.Email, &user.RoleID, &user.Cedula,
+		&user.Phone, &user.FullName, &user.IsActive, &user.LastLogin,
+		&user.DeviceTokens, &user.CreatedAt, &user.UpdatedAt, &user.AnonymousID,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to get user by email: %v", err)
+	}
+
+	return user, nil
+}
+
+// GetRoleByID obtiene un rol por su ID
+func (ur *UserRepository) GetRoleByID(ctx context.Context, roleID int) (*models.Role, error) {
+	query := `
+		SELECT id, name, description, permissions, created_at, updated_at
+		FROM roles 
+		WHERE id = $1`
+
+	role := &models.Role{}
+	err := ur.db.QueryRowContext(ctx, query, roleID).Scan(
+		&role.ID, &role.Name, &role.Description, &role.Permissions,
+		&role.CreatedAt, &role.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("role not found")
+		}
+		return nil, fmt.Errorf("failed to get role by ID: %v", err)
+	}
+
+	return role, nil
 }

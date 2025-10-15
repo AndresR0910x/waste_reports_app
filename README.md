@@ -1,19 +1,17 @@
-# Clean City - Backend de Gestión de Residuos 🗑️♻️
+# Backend Residuos App
 
-Backend RESTful para la aplicación de gestión de residuos urbanos, construido con Go, PostgreSQL y Firebase.
+Backend API para la aplicación Clean City - Sistema de gestión de residuos urbanos con autenticación Firebase y validación robusta.
 
-## 🌟 Características
+## 🚀 Características
 
-- ✅ **Firebase Admin SDK**: Autenticación de usuarios y verificación de tokens
-- ✅ **Firebase Cloud Messaging (FCM)**: Notificaciones push
-- ✅ **PostgreSQL con PostGIS**: Base de datos geoespacial para coordenadas
-- ✅ **Sistema de Migraciones**: Goose para gestión de esquema de BD
-- ✅ **Roles de Usuario**: Ciudadano, Operador, Administrador
-- ✅ **Gin Framework**: Framework web rápido para Go
-- ✅ **Middleware de Autenticación**: Protección de rutas con Firebase Auth
-- ✅ **CORS**: Configuración para cross-origin requests
-- ✅ **Sistema de Auditoría**: Logging completo de operaciones
-- ✅ **Sincronización Firebase-PostgreSQL**: Mapeo de UIDs
+- **Autenticación Firebase**: Sistema seguro de registro e inicio de sesión
+- **Validación robusta**: Validación integral de datos de entrada con mensajes personalizados
+- **Arquitectura limpia**: Estructura modular siguiendo principios SOLID
+- **Testing completo**: Tests unitarios con mocks y cobertura
+- **CI/CD**: Pipeline automatizado con GitHub Actions
+- **Containerización**: Docker y Docker Compose para desarrollo y producción
+- **Hot reload**: Desarrollo ágil con recarga automática
+- **Documentación Swagger**: API documentada automáticamente
 
 ## 🏗️ Estructura del Proyecto
 

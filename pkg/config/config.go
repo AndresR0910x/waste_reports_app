@@ -21,6 +21,10 @@ type Config struct {
 	// Firebase configuration
 	FirebaseCredentialsPath string
 	FirebaseProjectID       string
+	FirebaseStorageBucket   string
+
+	// External APIs
+	CedulaAPIURL string
 
 	// Environment
 	Environment string
@@ -46,6 +50,10 @@ func LoadConfig() *Config {
 		// Firebase configuration
 		FirebaseCredentialsPath: getEnv("FIREBASE_CREDENTIALS_PATH", ""),
 		FirebaseProjectID:       getEnv("FIREBASE_PROJECT_ID", ""),
+		FirebaseStorageBucket:   getEnv("FIREBASE_STORAGE_BUCKET", ""),
+
+		// External APIs
+		CedulaAPIURL: getEnv("CEDULA_API_URL", ""),
 
 		// Environment
 		Environment: getEnv("ENVIRONMENT", "development"),
